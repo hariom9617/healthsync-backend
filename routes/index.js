@@ -1,3 +1,4 @@
+import aiRoutes from '../src/features/ai/ai.routes.js'
 import authRoutes from './auth.routes.js'
 import healthMetricRoutes from './healthMetric.routes.js'
 import workoutRoutes from './workout.routes.js'
@@ -12,4 +13,5 @@ export const registerRoutes = (app) => {
   app.use('/api/goals', goalRoutes)
   app.use('/api/nutrition', nutritionRoutes)
   app.use('/api/onboarding', onboardingRoutes)
+  app.use('/api/ai', aiRoutes)
 }

@@ -1,7 +1,6 @@
-import mongoose from 'mongoose'
 import { errorResponse } from '../utils/response.utils.js'
 
-export const errorHandler = (err, req, res, next) => {
+export const errorHandler = (err, req, res) => {
   let error = { ...err }
   error.message = err.message
 
