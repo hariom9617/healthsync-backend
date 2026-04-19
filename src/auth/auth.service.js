@@ -1,5 +1,4 @@
 import bcrypt from 'bcryptjs'
-import { v4 as uuidv4 } from 'uuid'
 import User from '../../models/User.model.js'
 import Token from '../../models/Token.model.js'
 import {
@@ -7,8 +6,16 @@ import {
   generateRefreshToken,
   verifyRefreshToken,
 } from '../../utils/jwt.utils.js'
-import { sendEmail, verificationEmail, passwordResetEmail } from '../../utils/email.utils.js'
-import { config } from '../../config/env.js'
+import {
+  sendEmail,
+  verificationEmail,
+  passwordResetEmail,
+  welcomeEmail,
+} from '../../utils/email.utils.js'
+
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString()
+}
 
 export const register = async ({ firstName, lastName, email, password, consent }) => {
   const existingUser = await User.findOne({ email: email.toLowerCase() })
@@ -27,18 +34,18 @@ export const register = async ({ firstName, lastName, email, password, consent }
     },
   })
 
-  const verificationToken = uuidv4()
-  const hashedToken = await bcrypt.hash(verificationToken, 12)
+  const otp = generateOTP()
+
+  await Token.deleteMany({ userId: user._id, type: 'otp' })
 
   await Token.create({
     userId: user._id,
-    token: hashedToken,
-    type: 'verification',
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    token: otp,
+    type: 'otp',
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   })
 
-  const verificationLink = `${config.clientUrl}/verify-email?token=${verificationToken}`
-  const emailContent = verificationEmail(user.getFullName(), verificationLink)
+  const emailContent = verificationEmail(user.getFullName(), otp)
   await sendEmail({
     to: user.email,
     subject: emailContent.subject,
@@ -64,9 +71,9 @@ export const login = async ({ email, password }) => {
     throw Object.assign(new Error('Invalid credentials'), { statusCode: 401 })
   }
 
-  if (!user.isVerified) {
-    throw Object.assign(new Error('Please verify your email first'), { statusCode: 401 })
-  }
+  // if (!user.isVerified) {
+  //   throw Object.assign(new Error('Please verify your email first'), { statusCode: 401 })
+  // }
 
   if (!user.isActive) {
     throw Object.assign(new Error('Account is deactivated'), { statusCode: 401 })
@@ -86,8 +93,12 @@ export const login = async ({ email, password }) => {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   })
 
+  const userJSON = user.toJSON()
   return {
-    user: user.toJSON(),
+    user: {
+      ...userJSON,
+      isOnboardingComplete: user.isOnboardingComplete,
+    },
     accessToken,
     refreshToken,
   }
@@ -196,6 +207,41 @@ export const verifyEmail = async (token) => {
   return user
 }
 
+export const verifyOTP = async ({ email, otp }) => {
+  const user = await User.findOne({ email: email.toLowerCase() })
+
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+  }
+
+  const tokenDoc = await Token.findOne({
+    userId: user._id,
+    type: 'otp',
+    token: otp,
+    isRevoked: false,
+    expiresAt: { $gt: new Date() },
+  })
+
+  if (!tokenDoc) {
+    throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 })
+  }
+
+  user.isVerified = true
+  await user.save()
+
+  tokenDoc.isRevoked = true
+  await tokenDoc.save()
+
+  const emailContent = welcomeEmail(user.getFullName())
+  await sendEmail({
+    to: user.email,
+    subject: emailContent.subject,
+    html: emailContent.html,
+  })
+
+  return user
+}
+
 export const forgotPassword = async (email) => {
   const user = await User.findOne({ email: email.toLowerCase() })
 
@@ -205,18 +251,19 @@ export const forgotPassword = async (email) => {
     })
   }
 
-  const resetToken = uuidv4()
-  const hashedToken = await bcrypt.hash(resetToken, 12)
+  const otp = generateOTP()
+
+  await Token.deleteMany({ userId: user._id, type: 'otp', purpose: 'reset' })
 
   await Token.create({
     userId: user._id,
-    token: hashedToken,
-    type: 'reset',
-    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    token: otp,
+    type: 'otp',
+    purpose: 'reset',
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   })
 
-  const resetLink = `${config.clientUrl}/reset-password?token=${resetToken}`
-  const emailContent = passwordResetEmail(user.getFullName(), resetLink)
+  const emailContent = passwordResetEmail(user.getFullName(), otp)
 
   await sendEmail({
     to: user.email,
@@ -225,34 +272,63 @@ export const forgotPassword = async (email) => {
   })
 }
 
-export const resetPassword = async (token, newPassword) => {
-  const tokens = await Token.find({
-    type: 'reset',
+export const resetPassword = async ({ email, otp, newPassword }) => {
+  const user = await User.findOne({ email: email.toLowerCase() })
+
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+  }
+
+  const tokenDoc = await Token.findOne({
+    userId: user._id,
+    type: 'otp',
+    token: otp,
+    purpose: 'reset',
     isRevoked: false,
     expiresAt: { $gt: new Date() },
   })
 
-  let matchingToken = null
-  for (const tokenDoc of tokens) {
-    const isMatch = await bcrypt.compare(token, tokenDoc.token)
-    if (isMatch) {
-      matchingToken = tokenDoc
-      break
-    }
-  }
-
-  if (!matchingToken) {
-    throw Object.assign(new Error('Invalid or expired reset token'), { statusCode: 400 })
-  }
-
-  const user = await User.findById(matchingToken.userId)
-  if (!user) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+  if (!tokenDoc) {
+    throw Object.assign(new Error('Invalid or expired code'), { statusCode: 400 })
   }
 
   user.password = newPassword
   await user.save()
 
-  matchingToken.isRevoked = true
-  await matchingToken.save()
+  tokenDoc.isRevoked = true
+  await tokenDoc.save()
+
+  return user
+}
+
+export const resendOTP = async (email) => {
+  const user = await User.findOne({ email: email.toLowerCase() })
+
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+  }
+
+  if (user.isVerified) {
+    throw Object.assign(new Error('Email already verified'), { statusCode: 400 })
+  }
+
+  await Token.deleteMany({ userId: user._id, type: 'otp' })
+
+  const otp = generateOTP()
+
+  await Token.create({
+    userId: user._id,
+    token: otp,
+    type: 'otp',
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  })
+
+  const emailContent = verificationEmail(user.getFullName(), otp)
+  await sendEmail({
+    to: user.email,
+    subject: emailContent.subject,
+    html: emailContent.html,
+  })
+
+  return { message: 'OTP sent' }
 }

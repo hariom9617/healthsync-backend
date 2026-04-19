@@ -14,8 +14,13 @@ const tokenSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['refresh', 'verification', 'reset'],
+      enum: ['refresh', 'verification', 'reset', 'otp'],
       required: true,
+    },
+    purpose: {
+      type: String,
+      enum: ['verification', 'reset'],
+      default: 'verification',
     },
     expiresAt: {
       type: Date,

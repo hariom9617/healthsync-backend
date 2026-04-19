@@ -9,9 +9,9 @@ export const registerSchema = Joi.object({
     .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
     .required(),
   consent: Joi.object({
-    dataCollection: Joi.boolean().valid(true).required(),
+    dataCollection: Joi.boolean().default(false),
     marketing: Joi.boolean().default(false),
-  }).required(),
+  }).default({ dataCollection: false, marketing: false }),
 })
 
 export const loginSchema = Joi.object({
@@ -24,13 +24,23 @@ export const forgotPasswordSchema = Joi.object({
 })
 
 export const resetPasswordSchema = Joi.object({
-  token: Joi.string().required(),
+  email: Joi.string().email().required(),
+  otp: Joi.string().length(6).pattern(/^\d+$/).required(),
   password: Joi.string()
     .min(8)
     .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
     .required(),
 })
 
+export const verifyOTPSchema = Joi.object({
+  email: Joi.string().email().required(),
+  otp: Joi.string().length(6).pattern(/^\d+$/).required(),
+})
+
 export const refreshSchema = Joi.object({
   refreshToken: Joi.string().required(),
+})
+
+export const googleMobileSchema = Joi.object({
+  idToken: Joi.string().required(),
 })

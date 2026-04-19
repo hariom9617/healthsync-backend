@@ -2,7 +2,7 @@ import dotenv from 'dotenv'
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
-import rateLimit from 'express-rate-limit'
+import { rateLimit } from 'express-rate-limit'
 import mongoSanitize from 'express-mongo-sanitize'
 import xssClean from 'xss-clean'
 import morgan from 'morgan'
@@ -15,12 +15,33 @@ import { errorHandler } from './middleware/error.middleware.js'
 dotenv.config()
 
 const app = express()
+app.set('trust proxy', 1)
 
 app.use(helmet())
 
+app.use((req, res, next) => {
+  res.setHeader('ngrok-skip-browser-warning', 'true')
+  next()
+})
+
 app.use(
   cors({
-    origin: config.clientUrl,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true)
+      const allowed = [
+        config.clientUrl,
+        /\.ngrok-free\.app$/,
+        /\.ngrok-free\.dev$/,
+        /\.ngrok\.io$/,
+        /^http:\/\/localhost/,
+        /^http:\/\/10\./,
+        /^http:\/\/192\.168\./,
+      ]
+      const isAllowed = allowed.some((pattern) =>
+        pattern instanceof RegExp ? pattern.test(origin) : origin === pattern
+      )
+      callback(null, isAllowed)
+    },
     credentials: true,
   })
 )

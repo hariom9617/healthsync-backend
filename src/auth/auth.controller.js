@@ -4,9 +4,9 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   refreshSchema,
+  verifyOTPSchema,
 } from '../../validations/auth.schema.js'
 import { successResponse, errorResponse } from '../../utils/response.utils.js'
-import { logAudit } from '../../middleware/audit.middleware.js'
 import * as authService from './auth.service.js'
 
 export const register = async (req, res) => {
@@ -79,7 +79,45 @@ export const refreshToken = async (req, res) => {
     }
 
     const result = await authService.refreshTokens(value.refreshToken)
-    return successResponse(res, 200, 'Tokens refreshed successfully', result)
+    return successResponse(res, 200, 'Token refreshed', result)
+  } catch (error) {
+    return errorResponse(res, error.statusCode || 500, error.message)
+  }
+}
+
+export const verifyOTP = async (req, res) => {
+  try {
+    const { error, value } = verifyOTPSchema.validate(req.body)
+    if (error) {
+      return errorResponse(
+        res,
+        400,
+        'Validation failed',
+        error.details.map((d) => d.message)
+      )
+    }
+
+    const user = await authService.verifyOTP({ email: value.email, otp: value.otp })
+    return successResponse(res, 200, 'Email verified successfully', { user })
+  } catch (error) {
+    return errorResponse(res, error.statusCode || 500, error.message)
+  }
+}
+
+export const resendOTP = async (req, res) => {
+  try {
+    const { error, value } = forgotPasswordSchema.validate(req.body)
+    if (error) {
+      return errorResponse(
+        res,
+        400,
+        'Validation failed',
+        error.details.map((d) => d.message)
+      )
+    }
+
+    const result = await authService.resendOTP(value.email)
+    return successResponse(res, 200, 'OTP sent', result)
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
   }
@@ -87,13 +125,18 @@ export const refreshToken = async (req, res) => {
 
 export const verifyEmail = async (req, res) => {
   try {
-    const { token } = req.params
-    if (!token) {
-      return errorResponse(res, 400, 'Verification token required')
+    const { error, value } = verifyOTPSchema.validate(req.body)
+    if (error) {
+      return errorResponse(
+        res,
+        400,
+        'Validation failed',
+        error.details.map((d) => d.message)
+      )
     }
 
-    const user = await authService.verifyEmail(token)
-    return successResponse(res, 200, 'Email verified successfully', user.toJSON())
+    const user = await authService.verifyOTP({ email: value.email, otp: value.otp })
+    return successResponse(res, 200, 'Email verified successfully', { user })
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
   }
@@ -134,7 +177,11 @@ export const resetPassword = async (req, res) => {
       )
     }
 
-    await authService.resetPassword(value.token, value.password)
+    await authService.resetPassword({
+      email: value.email,
+      otp: value.otp,
+      newPassword: value.password,
+    })
     return successResponse(res, 200, 'Password reset successfully')
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -154,7 +201,11 @@ export const googleCallback = async (req, res) => {
 
 export const getMe = async (req, res) => {
   try {
-    return successResponse(res, 200, 'User profile retrieved successfully', req.user.toJSON())
+    const userJSON = req.user.toJSON()
+    return successResponse(res, 200, 'User profile retrieved successfully', {
+      ...userJSON,
+      isOnboardingComplete: req.user.isOnboardingComplete,
+    })
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
   }

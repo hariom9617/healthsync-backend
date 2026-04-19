@@ -44,15 +44,64 @@ const userSchema = new mongoose.Schema(
     passwordResetToken: String,
     passwordResetExpiry: Date,
     healthProfile: {
-      dob: Date,
-      gender: String,
-      heightCm: Number,
-      weightKg: Number,
-      fitnessGoal: {
+      age: { type: Number, min: 10, max: 120 },
+      gender: { type: String, enum: ['male', 'female', 'non_binary', 'prefer_not_to_say'] },
+      heightCm: { type: Number, min: 50, max: 300 },
+      weightKg: { type: Number, min: 20, max: 500 },
+      bmi: { type: Number },
+
+      experienceLevel: {
         type: String,
-        enum: ['lose_weight', 'build_muscle', 'improve_endurance', 'general_health'],
+        enum: ['beginner', 'intermediate', 'advanced'],
       },
+      activityLevel: {
+        type: String,
+        enum: [
+          'sedentary',
+          'lightly_active',
+          'moderately_active',
+          'very_active',
+          'extremely_active',
+        ],
+      },
+      fitnessGoals: [
+        {
+          type: String,
+          enum: [
+            'weight_loss',
+            'muscle_gain',
+            'endurance',
+            'tone',
+            'flexibility',
+            'general_health',
+          ],
+        },
+      ],
+      equipment: [
+        {
+          type: String,
+          enum: ['dumbbells', 'yoga_mat', 'full_gym', 'resistance_bands', 'kettlebells', 'none'],
+        },
+      ],
+
+      parQ: {
+        chronicConditions: { type: Boolean, default: false },
+        chronicConditionsDetail: { type: String, default: '' },
+        currentInjuries: { type: Boolean, default: false },
+        regularMedications: { type: Boolean, default: false },
+        heartOrChestPain: { type: Boolean, default: false },
+        dizzinessOrFainting: { type: Boolean, default: false },
+        consultDoctorRecommended: { type: Boolean, default: false },
+      },
+
+      dietaryPreferences: [
+        {
+          type: String,
+          enum: ['none', 'vegan', 'keto', 'paleo', 'vegetarian', 'gluten_free', 'halal'],
+        },
+      ],
     },
+    isOnboardingComplete: { type: Boolean, default: false },
     consent: {
       dataCollection: {
         type: Boolean,
@@ -83,6 +132,30 @@ userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next()
 
   this.password = await bcrypt.hash(this.password, 12)
+  next()
+})
+
+userSchema.pre('save', function (next) {
+  if (this.healthProfile?.heightCm && this.healthProfile?.weightKg) {
+    const heightM = this.healthProfile.heightCm / 100
+    this.healthProfile.bmi = parseFloat(
+      (this.healthProfile.weightKg / (heightM * heightM)).toFixed(1)
+    )
+  }
+  next()
+})
+
+userSchema.pre('save', function (next) {
+  if (this.healthProfile?.parQ) {
+    const parQ = this.healthProfile.parQ
+    const anyRisk =
+      parQ.chronicConditions ||
+      parQ.currentInjuries ||
+      parQ.regularMedications ||
+      parQ.heartOrChestPain ||
+      parQ.dizzinessOrFainting
+    this.healthProfile.parQ.consultDoctorRecommended = anyRisk
+  }
   next()
 })
 
