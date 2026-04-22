@@ -4,6 +4,7 @@ import { config } from '../../config/env.js'
 import { buildUserHealthContext } from '../features/ai/context.builder.js'
 
 let io
+const userSockets = new Map()
 
 export const initializeSocket = (server) => {
   io = new Server(server, {
@@ -40,6 +41,7 @@ export const initializeSocket = (server) => {
   io.on('connection', (socket) => {
     // eslint-disable-next-line no-console
     console.log(`User ${socket.userId} connected to socket`)
+    userSockets.set(socket.userId.toString(), socket.id)
 
     socket.on('ai:chat', async ({ message, conversationHistory = [] }) => {
       try {
@@ -125,6 +127,7 @@ export const initializeSocket = (server) => {
     socket.on('disconnect', () => {
       // eslint-disable-next-line no-console
       console.log(`User ${socket.userId} disconnected from socket`)
+      userSockets.delete(socket.userId.toString())
     })
 
     socket.on('error', (error) => {
@@ -134,6 +137,13 @@ export const initializeSocket = (server) => {
   })
 
   return io
+}
+
+export const emitNotificationToUser = (userId, notification) => {
+  const socketId = userSockets.get(userId.toString())
+  if (socketId) {
+    io.to(socketId).emit('notification:new', notification)
+  }
 }
 
 export const getSocketIO = () => {

@@ -4,14 +4,18 @@ import { connectDB } from './config/db.js'
 import app from './app.js'
 import { config } from './config/env.js'
 import { startGoalCheckerJob } from './jobs/goalChecker.job.js'
+import { startNotificationScheduler } from './src/jobs/notificationScheduler.job.js'
 import { initializeSocket } from './src/socket/index.js'
+import { seedWorkoutTemplates } from './src/data/workoutTemplates.seed.js'
 
 dotenv.config()
 
 const startServer = async () => {
   try {
     await connectDB()
+    await seedWorkoutTemplates()
     startGoalCheckerJob()
+    startNotificationScheduler()
 
     const server = createServer(app)
     initializeSocket(server)

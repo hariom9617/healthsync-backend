@@ -1,5 +1,6 @@
 import express from 'express'
 import { verifyToken } from '../../../middleware/auth.middleware.js'
+import { sendPushNotification } from '../../services/push.service.js'
 import { buildUserHealthContext } from './context.builder.js'
 
 const router = express.Router()
@@ -133,6 +134,18 @@ router.post('/insights', verifyToken, async (req, res) => {
     })
 
     const data = await response.json()
+
+    // Send notification for successful insights generation
+    if (data.success && data.data?.insights?.length > 0) {
+      await sendPushNotification({
+        userId: req.user._id,
+        title: 'Your Weekly Insights Are Ready',
+        body: 'HealthSync AI has analyzed your health data. Tap to view personalized insights.',
+        type: 'ai_insight',
+        data: { insightsCount: data.data.insights.length },
+      })
+    }
+
     res.json(data)
   } catch (error) {
     console.error('AI Insights Error:', error)
