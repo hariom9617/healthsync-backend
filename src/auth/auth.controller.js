@@ -5,6 +5,7 @@ import {
   resetPasswordSchema,
   refreshSchema,
   verifyOTPSchema,
+  googleMobileSchema,
 } from '../../validations/auth.schema.js'
 import { successResponse, errorResponse } from '../../utils/response.utils.js'
 import * as authService from './auth.service.js'
@@ -196,6 +197,25 @@ export const googleCallback = async (req, res) => {
   } catch (error) {
     const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?error=authentication_failed`
     return res.redirect(redirectUrl)
+  }
+}
+
+export const googleMobile = async (req, res) => {
+  try {
+    const { error, value } = googleMobileSchema.validate(req.body)
+    if (error) {
+      return errorResponse(
+        res,
+        400,
+        'Validation failed',
+        error.details.map((d) => d.message)
+      )
+    }
+
+    const result = await authService.googleMobileAuth(value.idToken)
+    return successResponse(res, 200, 'Google authentication successful', result)
+  } catch (error) {
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 

@@ -18,7 +18,7 @@ export const logMetric = async ({ userId, type, value, unit, source, metadata, r
   return metric
 }
 
-export const getMetrics = async ({ userId, type, from, to, limit, page }) => {
+export const getMetrics = async ({ userId, type, from, to, limit, page, offset }) => {
   const filter = { userId }
 
   if (type) {
@@ -31,7 +31,7 @@ export const getMetrics = async ({ userId, type, from, to, limit, page }) => {
     if (to) filter.recordedAt.$lte = to
   }
 
-  const skip = (page - 1) * limit
+  const skip = offset || (page ? (page - 1) * limit : 0)
 
   const [metrics, total] = await Promise.all([
     HealthMetric.find(filter).sort({ recordedAt: -1 }).skip(skip).limit(limit),
@@ -41,7 +41,9 @@ export const getMetrics = async ({ userId, type, from, to, limit, page }) => {
   return {
     metrics,
     total,
-    page,
+    limit,
+    offset: skip,
+    page: page ? page : Math.floor(skip / limit) + 1,
     totalPages: Math.ceil(total / limit),
   }
 }

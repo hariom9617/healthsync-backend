@@ -1,146 +1,32 @@
-import { SocialPost } from '../../models/SocialPost.model.js'
-import HealthMetric from '../../../models/HealthMetric.model.js'
-import User from '../../../models/User.model.js'
+import SocialPost from '../../../models/SocialPost.model.js'
+import { successResponse, errorResponse } from '../../../utils/response.utils.js'
+import * as socialService from './social.service.js'
 
 export const getFeed = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query
-    const skip = (page - 1) * limit
-
-    const posts = await SocialPost.find({ visibility: 'public' })
-      .populate('userId', 'firstName lastName profileImage')
-      .populate('kudos.userId', 'firstName lastName')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-
-    res.json({
-      success: true,
-      data: posts,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total: await SocialPost.countDocuments({ visibility: 'public' }),
-      },
-    })
+    const feed = await socialService.getFeed(req.user._id)
+    return successResponse(res, 200, 'Feed fetched', feed)
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch social feed',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
 export const giveKudos = async (req, res) => {
   try {
     const { postId } = req.params
-    const userId = req.user._id
-
-    const post = await SocialPost.findById(postId)
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Post not found',
-      })
-    }
-
-    // Check if user already gave kudos
-    const alreadyGave = post.kudos.some((kudo) => kudo.userId.toString() === userId.toString())
-    if (alreadyGave) {
-      return res.status(400).json({
-        success: false,
-        message: 'You already gave kudos to this post',
-      })
-    }
-
-    // Add kudos
-    post.kudos.push({ userId })
-    post.kudosCount += 1
-    await post.save()
-
-    const updatedPost = await SocialPost.findById(postId)
-      .populate('userId', 'firstName lastName profileImage')
-      .populate('kudos.userId', 'firstName lastName')
-
-    res.json({
-      success: true,
-      data: updatedPost,
-      message: 'Kudos given successfully',
-    })
+    const result = await socialService.giveKudos(req.user._id, postId)
+    return successResponse(res, 200, 'Kudos updated', result)
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to give kudos',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
 export const getWeeklyStepsLeaderboard = async (req, res) => {
   try {
-    // Get current week start (Monday)
-    const now = new Date()
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() - now.getDay() + 1) // Monday
-    weekStart.setUTCHours(0, 0, 0, 0)
-
-    // Aggregate steps for each user this week
-    const weeklySteps = await HealthMetric.aggregate([
-      {
-        $match: {
-          type: 'steps',
-          recordedAt: { $gte: weekStart },
-        },
-      },
-      {
-        $group: {
-          _id: '$userId',
-          totalSteps: { $sum: '$value' },
-          daysActive: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$recordedAt' } } },
-        },
-      },
-      {
-        $addFields: {
-          daysCount: { $size: '$daysActive' },
-        },
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'user',
-        },
-      },
-      {
-        $unwind: '$user',
-      },
-      {
-        $project: {
-          userId: '$_id',
-          totalSteps: 1,
-          daysCount: 1,
-          firstName: '$user.firstName',
-          lastName: '$user.lastName',
-          profileImage: '$user.profileImage',
-        },
-      },
-      {
-        $sort: { totalSteps: -1 },
-      },
-      {
-        $limit: 10,
-      },
-    ])
-
-    res.json({
-      success: true,
-      data: weeklySteps,
-    })
+    const leaderboard = await socialService.getWeeklyStepsLeaderboard()
+    return successResponse(res, 200, 'Leaderboard fetched', leaderboard)
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch weekly steps leaderboard',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 

@@ -9,11 +9,29 @@ export const logWorkout = async ({ userId, ...workoutFields }) => {
   return workout
 }
 
-export const getWorkouts = async ({ userId, type, from, to, limit, page }) => {
+export const getWorkouts = async ({
+  userId,
+  type,
+  difficulty,
+  duration,
+  from,
+  to,
+  limit,
+  page,
+  offset,
+}) => {
   const filter = { userId }
 
   if (type) {
     filter.type = type
+  }
+
+  if (difficulty) {
+    filter.difficulty = difficulty
+  }
+
+  if (duration) {
+    filter.duration = duration
   }
 
   if (from || to) {
@@ -22,7 +40,7 @@ export const getWorkouts = async ({ userId, type, from, to, limit, page }) => {
     if (to) filter.completedAt.$lte = to
   }
 
-  const skip = (page - 1) * limit
+  const skip = offset || (page ? (page - 1) * limit : 0)
 
   const [workouts, total] = await Promise.all([
     Workout.find(filter).sort({ completedAt: -1 }).skip(skip).limit(limit),
@@ -32,7 +50,9 @@ export const getWorkouts = async ({ userId, type, from, to, limit, page }) => {
   return {
     workouts,
     total,
-    page,
+    limit,
+    offset: skip,
+    page: page ? page : Math.floor(skip / limit) + 1,
     totalPages: Math.ceil(total / limit),
   }
 }

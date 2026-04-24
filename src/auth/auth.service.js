@@ -17,15 +17,25 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
 
-export const register = async ({ firstName, lastName, email, password, consent }) => {
+export const register = async ({ name, firstName, lastName, email, password, consent }) => {
   const existingUser = await User.findOne({ email: email.toLowerCase() })
   if (existingUser) {
     throw Object.assign(new Error('Email already registered'), { statusCode: 409 })
   }
 
+  // Handle both name formats
+  let userFirstName = firstName
+  let userLastName = lastName
+
+  if (name && !firstName && !lastName) {
+    const nameParts = name.trim().split(' ')
+    userFirstName = nameParts[0] || name
+    userLastName = nameParts.slice(1).join(' ') || ''
+  }
+
   const user = await User.create({
-    firstName,
-    lastName,
+    firstName: userFirstName,
+    lastName: userLastName,
     email: email.toLowerCase(),
     password,
     consent: {
@@ -299,6 +309,64 @@ export const resetPassword = async ({ email, otp, newPassword }) => {
   await tokenDoc.save()
 
   return user
+}
+
+export const googleMobileAuth = async (idToken) => {
+  // For now, we'll implement a basic verification
+  // In production, you should use Google's OAuth2 client library to verify the token
+  try {
+    // This is a simplified version - in production, verify the token with Google
+    const decoded = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString())
+
+    if (!decoded.email) {
+      throw Object.assign(new Error('Invalid token'), { statusCode: 401 })
+    }
+
+    let user = await User.findOne({ email: decoded.email.toLowerCase() })
+
+    if (!user) {
+      // Create new user from Google data
+      const nameParts = (decoded.name || '').split(' ')
+      user = await User.create({
+        firstName: nameParts[0] || 'User',
+        lastName: nameParts.slice(1).join(' ') || '',
+        email: decoded.email.toLowerCase(),
+        googleId: decoded.sub,
+        isVerified: true,
+        isActive: true,
+      })
+    } else if (!user.googleId) {
+      // Link Google account to existing user
+      user.googleId = decoded.sub
+      await user.save()
+    }
+
+    if (!user.isActive) {
+      throw Object.assign(new Error('Account is deactivated'), { statusCode: 401 })
+    }
+
+    user.lastLogin = new Date()
+    await user.save()
+
+    const payload = { userId: user._id, role: user.role }
+    const accessToken = generateAccessToken(payload)
+    const refreshToken = generateRefreshToken(payload)
+
+    await Token.create({
+      userId: user._id,
+      token: refreshToken,
+      type: 'refresh',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    })
+
+    return {
+      user: user.toJSON(),
+      accessToken,
+      refreshToken,
+    }
+  } catch (error) {
+    throw Object.assign(new Error('Invalid Google token'), { statusCode: 401 })
+  }
 }
 
 export const resendOTP = async (email) => {

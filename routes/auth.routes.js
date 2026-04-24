@@ -25,6 +25,7 @@ router.get(
   authController.googleCallback
 )
 
+router.post('/google/mobile', logAudit('google_login', 'user'), authController.googleMobile)
 router.get('/me', verifyToken, authController.getMe)
 
 export default router

@@ -12,3 +12,7 @@ yarn-debug.log*
 yarn-error.log*
 
 api.md
+changes.md
+frontend-api-scan-prompt.md
+frontend-api-scan-simple.md
+frontend-fixes.md

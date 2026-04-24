@@ -108,12 +108,39 @@ export const getMetricSummary = async (req, res) => {
   }
 }
 
+export const getMetricsList = async (req, res) => {
+  try {
+    const { type, from, to, limit = 100, offset = 0 } = req.query
+
+    const result = await healthMetricService.getMetrics({
+      userId: req.user.id,
+      type,
+      startDate: from,
+      endDate: to,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+    })
+
+    return successResponse(res, 200, 'Metrics list fetched', {
+      data: result.metrics,
+      pagination: {
+        total: result.total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+      },
+    })
+  } catch (error) {
+    return errorResponse(res, error.statusCode || 500, error.message)
+  }
+}
+
 export const deleteMetric = async (req, res) => {
   try {
-    const { metricId } = req.params
+    const { metricId, id } = req.params
+    const metricIdToDelete = metricId || id
     const result = await healthMetricService.deleteMetric({
       userId: req.user.id,
-      metricId,
+      metricId: metricIdToDelete,
     })
 
     return successResponse(res, 200, 'Metric deleted', result)

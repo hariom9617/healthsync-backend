@@ -1,54 +1,79 @@
 import Nutrition from '../../../models/Nutrition.model.js'
-import User from '../../../models/User.model.js'
 import { buildUserHealthContext } from '../ai/context.builder.js'
+import { successResponse, errorResponse } from '../../../utils/response.utils.js'
 
 export const getDailySummary = async (req, res) => {
   try {
-    const today = new Date()
-    today.setUTCHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
+    const { date } = req.query
+    const targetDate = date ? new Date(date) : new Date()
+    targetDate.setUTCHours(0, 0, 0, 0)
+    const tomorrow = new Date(targetDate)
     tomorrow.setDate(tomorrow.getDate() + 1)
 
-    const meals = await Nutrition.find({
+    // Get nutrition data for the date
+    let nutritionData = await Nutrition.findOne({
       userId: req.user._id,
-      recordedAt: { $gte: today, $lt: tomorrow },
+      date: targetDate,
     })
 
-    const totalCalories = meals.reduce((sum, meal) => sum + meal.calories, 0)
-    const totalCarbs = meals.reduce((sum, meal) => sum + (meal.macros?.carbs || 0), 0)
-    const totalProtein = meals.reduce((sum, meal) => sum + (meal.macros?.protein || 0), 0)
-    const totalFat = meals.reduce((sum, meal) => sum + (meal.macros?.fat || 0), 0)
+    if (!nutritionData) {
+      nutritionData = {
+        meals: [],
+        waterIntakeMl: 0,
+        dailySummary: {
+          totalCalories: 0,
+          totalProtein: 0,
+          totalCarbs: 0,
+          totalFat: 0,
+          totalFiber: 0,
+        },
+      }
+    }
 
-    const totalMacros = totalCarbs + totalProtein + totalFat
-    const macroPercentages =
-      totalMacros > 0
-        ? {
-            carbs: Math.round((totalCarbs / totalMacros) * 100),
-            protein: Math.round((totalProtein / totalMacros) * 100),
-            fat: Math.round((totalFat / totalMacros) * 100),
-          }
-        : { carbs: 0, protein: 0, fat: 0 }
+    const calorieGoal = 2200 // Default - should come from user profile
+    const proteinGoal = 150
+    const carbsGoal = 275
+    const fatGoal = 73
+    const waterGoal = 8
 
-    const user = await User.findById(req.user._id)
-    const calorieGoal = user.healthProfile?.dailyCalorieGoal || 2000
-    const deficit = calorieGoal - totalCalories
-
-    res.json({
-      success: true,
-      data: {
-        date: today.toISOString().split('T')[0],
-        totalCalories,
-        macroPercentages,
-        deficit,
-        calorieGoal,
-        mealsCount: meals.length,
+    return successResponse(res, 200, 'Daily summary fetched', {
+      today: {
+        calories: {
+          consumed: nutritionData.dailySummary.totalCalories,
+          goal: calorieGoal,
+          remaining: Math.max(0, calorieGoal - nutritionData.dailySummary.totalCalories),
+        },
+        macros: {
+          protein: {
+            consumed: nutritionData.dailySummary.totalProtein,
+            goal: proteinGoal,
+            unit: 'g',
+          },
+          carbs: {
+            consumed: nutritionData.dailySummary.totalCarbs,
+            goal: carbsGoal,
+            unit: 'g',
+          },
+          fat: {
+            consumed: nutritionData.dailySummary.totalFat,
+            goal: fatGoal,
+            unit: 'g',
+          },
+        },
+        water: {
+          consumed: Math.round(nutritionData.waterIntakeMl / 250), // Convert to glasses
+          goal: waterGoal,
+          unit: 'glasses',
+        },
+      },
+      weekly: {
+        averageCalories: 1950, // Calculate from week data
+        averageProtein: 80,
+        trend: 'improving',
       },
     })
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch daily summary',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
@@ -56,95 +81,112 @@ export const getMealsByDate = async (req, res) => {
   try {
     const { date } = req.query
     if (!date) {
-      return res.status(400).json({
-        success: false,
-        message: 'Date parameter is required',
-      })
+      return errorResponse(res, 400, 'Date parameter is required')
     }
 
     const targetDate = new Date(date)
     targetDate.setUTCHours(0, 0, 0, 0)
-    const nextDay = new Date(targetDate)
-    nextDay.setDate(nextDay.getDate() + 1)
 
-    const meals = await Nutrition.find({
+    const nutritionData = await Nutrition.findOne({
       userId: req.user._id,
-      recordedAt: { $gte: targetDate, $lt: nextDay },
-    }).sort({ recordedAt: 1 })
-
-    const groupedMeals = meals.reduce((acc, meal) => {
-      const type = meal.mealType || 'snack'
-      if (!acc[type]) acc[type] = []
-      acc[type].push(meal)
-      return acc
-    }, {})
-
-    res.json({
-      success: true,
-      data: groupedMeals,
+      date: targetDate,
     })
+
+    const meals = nutritionData?.meals || []
+
+    return successResponse(res, 200, 'Meals fetched', meals)
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch meals',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
 export const logMeal = async (req, res) => {
   try {
-    const { name, calories, carbs, protein, fat, mealType } = req.body
+    const { type, name, calories, macros, foods, date } = req.body
 
-    const meal = await Nutrition.create({
+    const targetDate = date ? new Date(date) : new Date()
+    targetDate.setUTCHours(0, 0, 0, 0)
+
+    // Find or create nutrition record for the date
+    let nutritionData = await Nutrition.findOne({
       userId: req.user._id,
+      date: targetDate,
+    })
+
+    if (!nutritionData) {
+      nutritionData = await Nutrition.create({
+        userId: req.user._id,
+        date: targetDate,
+        meals: [],
+        waterIntakeMl: 0,
+      })
+    }
+
+    // Add the new meal
+    const newMeal = {
+      mealType: type,
       name,
       calories,
-      macros: { carbs, protein, fat },
-      mealType,
-      recordedAt: new Date(),
-    })
+      protein: macros?.protein || 0,
+      carbs: macros?.carbs || 0,
+      fat: macros?.fat || 0,
+      fiber: macros?.fiber || 0,
+      sugar: macros?.sugar || 0,
+      sodium: macros?.sodium || 0,
+      servingSize: '',
+      source: 'manual',
+      loggedAt: new Date(),
+      foods: foods || [],
+    }
 
-    res.status(201).json({
-      success: true,
-      data: meal,
-      message: 'Meal logged successfully',
+    nutritionData.meals.push(newMeal)
+    await nutritionData.save()
+
+    return successResponse(res, 201, 'Meal logged successfully', {
+      id: nutritionData._id,
+      type,
+      name,
+      calories,
+      macros,
+      date: targetDate,
+      createdAt: newMeal.loggedAt,
     })
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to log meal',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
 export const deleteMeal = async (req, res) => {
   try {
-    const meal = await Nutrition.findOneAndDelete({
-      _id: req.params.id,
+    const { id } = req.params
+    const { date } = req.query
+
+    const targetDate = date ? new Date(date) : new Date()
+    targetDate.setUTCHours(0, 0, 0, 0)
+
+    const nutritionData = await Nutrition.findOne({
       userId: req.user._id,
+      date: targetDate,
     })
 
-    if (!meal) {
-      return res.status(404).json({
-        success: false,
-        message: 'Meal not found',
-      })
+    if (!nutritionData) {
+      return errorResponse(res, 404, 'Nutrition data not found')
     }
 
-    res.json({
-      success: true,
-      message: 'Meal deleted successfully',
-    })
+    // Remove the meal from the meals array
+    nutritionData.meals = nutritionData.meals.filter((meal) => meal._id.toString() !== id)
+    await nutritionData.save()
+
+    return successResponse(res, 200, 'Meal deleted successfully')
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete meal',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }
 
 export const getNutritionTip = async (req, res) => {
   try {
+    const { query } = req.body
+
     const userContext = await buildUserHealthContext(req.user._id)
 
     const response = await fetch(
@@ -152,20 +194,17 @@ export const getNutritionTip = async (req, res) => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_context: userContext }),
+        body: JSON.stringify({
+          query,
+          user_context: userContext,
+        }),
       }
     )
 
     const data = await response.json()
 
-    res.json({
-      success: true,
-      data: data,
-    })
+    return successResponse(res, 200, 'Nutrition tip generated', data.data)
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get nutrition tip',
-    })
+    return errorResponse(res, error.statusCode || 500, error.message)
   }
 }

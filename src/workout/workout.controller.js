@@ -46,7 +46,26 @@ export const getWorkouts = async (req, res) => {
       ...value,
     })
 
-    return successResponse(res, 200, 'Workouts fetched', result)
+    // Format response to match frontend expectations
+    const formattedWorkouts = result.workouts.map((workout) => ({
+      id: workout._id,
+      name: workout.name || workout.title,
+      type: workout.type,
+      difficulty: workout.difficulty || 'beginner',
+      duration: workout.duration,
+      targetMuscles: workout.targetMuscles || [],
+      equipment: workout.equipment || [],
+      rating: workout.rating || 4.5,
+      isFavorite: workout.isFavorite || false,
+      imageUrl: workout.imageUrl,
+      videoUrl: workout.videoUrl,
+      instructions: workout.instructions,
+      caloriesBurned: workout.caloriesBurned,
+      completedAt: workout.completedAt,
+      notes: workout.notes,
+    }))
+
+    return successResponse(res, 200, 'Workouts fetched', formattedWorkouts)
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
   }

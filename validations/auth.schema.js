@@ -1,8 +1,9 @@
 import Joi from 'joi'
 
 export const registerSchema = Joi.object({
-  firstName: Joi.string().trim().min(2).max(50).required(),
-  lastName: Joi.string().trim().min(2).max(50).required(),
+  name: Joi.string().trim().min(2).max(100).optional(),
+  firstName: Joi.string().trim().min(2).max(50).optional(),
+  lastName: Joi.string().trim().min(2).max(50).optional(),
   email: Joi.string().email().required(),
   password: Joi.string()
     .min(8)
@@ -12,7 +13,7 @@ export const registerSchema = Joi.object({
     dataCollection: Joi.boolean().default(false),
     marketing: Joi.boolean().default(false),
   }).default({ dataCollection: false, marketing: false }),
-})
+}).or('name', 'firstName')
 
 export const loginSchema = Joi.object({
   email: Joi.string().email().required(),
