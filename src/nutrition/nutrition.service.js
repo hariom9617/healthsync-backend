@@ -2,9 +2,9 @@ import axios from 'axios'
 import Nutrition from '../../models/Nutrition.model.js'
 
 const normalizeDate = (date) => {
-  const normalized = new Date(date)
-  normalized.setUTCHours(0, 0, 0, 0)
-  return normalized
+  const d = new Date(date)
+  if (isNaN(d)) throw new Error('Invalid date')
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
 }
 
 export const logMeal = async ({
