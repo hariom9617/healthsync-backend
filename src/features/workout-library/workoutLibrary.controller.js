@@ -22,15 +22,17 @@ export const browseWorkouts = async (req, res) => {
       id: workout._id,
       name: workout.name,
       type: workout.type,
-      difficulty: workout.difficulty || 'beginner',
-      duration: workout.duration || 30,
-      targetMuscles: workout.targetMuscles || [],
+      level: workout.level,
+      difficulty: workout.difficulty,
+      duration: workout.duration,
+      sets: workout.sets,
+      reps: workout.reps,
+      rest: workout.rest,
+      muscleGroups: workout.muscleGroups || [],
       equipment: workout.equipment || [],
-      rating: workout.rating || 4.5,
-      isFavorite: workout.isFavorite || false,
+      caloriesBurned: workout.caloriesBurned || 0,
       imageUrl: workout.imageUrl,
       videoUrl: workout.videoUrl,
-      instructions: workout.instructions,
     }))
 
     return successResponse(res, 200, 'Workouts fetched', formattedWorkouts)
