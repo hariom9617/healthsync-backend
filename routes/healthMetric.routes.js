@@ -10,6 +10,8 @@ router.get('/', verifyToken, ctrl.getMetrics)
 router.get('/list', verifyToken, ctrl.getMetricsList)
 router.get('/latest', verifyToken, ctrl.getLatestMetrics)
 router.get('/summary', verifyToken, ctrl.getMetricSummary)
+router.get('/weekly-summary', verifyToken, ctrl.getWeeklySummary)
+router.get('/streaks', verifyToken, ctrl.getStreaks)
 router.delete('/:metricId', verifyToken, ctrl.deleteMetric)
 router.delete('/:id', verifyToken, ctrl.deleteMetric)
 
