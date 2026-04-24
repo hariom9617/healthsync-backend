@@ -1,4 +1,4 @@
-import SocialPost from '../../../models/SocialPost.model.js'
+import { SocialPost } from '../../models/SocialPost.model.js'
 import { successResponse, errorResponse } from '../../../utils/response.utils.js'
 import * as socialService from './social.service.js'
 
