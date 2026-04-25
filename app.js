@@ -1,9 +1,6 @@
 import dotenv from 'dotenv'
 import express from 'express'
-import helmet from 'helmet'
 import cors from 'cors'
-import { rateLimit } from 'express-rate-limit'
-import mongoSanitize from 'express-mongo-sanitize'
 import xssClean from 'xss-clean'
 import morgan from 'morgan'
 import cookieParser from 'cookie-parser'
@@ -11,13 +8,15 @@ import passport from './config/passport.js'
 import { config } from './config/env.js'
 import { registerRoutes } from './routes/index.js'
 import { errorHandler } from './middleware/error.middleware.js'
+import { applySecurityMiddleware } from './src/middleware/security.js'
 
 dotenv.config()
 
 const app = express()
 app.set('trust proxy', 1)
 
-app.use(helmet())
+// Phase 7: comprehensive security hardening (helmet, rate limiters, hpp, mongo-sanitize, X-Request-ID)
+applySecurityMiddleware(app)
 
 app.use((req, res, next) => {
   res.setHeader('ngrok-skip-browser-warning', 'true')
@@ -54,17 +53,6 @@ if (config.nodeEnv === 'development') {
   app.use(morgan('dev'))
 }
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-})
-
-app.use('/api/auth/*', authLimiter)
-
-app.use(mongoSanitize())
 app.use(xssClean())
 
 app.use(passport.initialize())

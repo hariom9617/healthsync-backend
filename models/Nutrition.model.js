@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { encryptField, decryptField } from '../src/utils/encryption.js'
 
 const { Schema } = mongoose
 
@@ -22,7 +23,7 @@ const nutritionSchema = new Schema(
           required: true,
         },
         name: {
-          type: String,
+          type: String, // stored as AES-256-GCM encrypted JSON string (HIPAA)
           required: true,
         },
         calories: {
@@ -100,6 +101,8 @@ const nutritionSchema = new Schema(
 
 nutritionSchema.index({ userId: 1, date: 1 }, { unique: true })
 
+// ── Daily summary rollup ──────────────────────────────────────────────────────
+
 nutritionSchema.pre('save', function (next) {
   const summary = this.meals.reduce(
     (acc, meal) => {
@@ -121,6 +124,40 @@ nutritionSchema.pre('save', function (next) {
 
   this.dailySummary = summary
   next()
+})
+
+// ── Meal name encryption: pre-save ────────────────────────────────────────────
+
+nutritionSchema.pre('save', function (next) {
+  if (!this.isModified('meals')) return next()
+
+  for (const meal of this.meals) {
+    if (meal.name !== null) {
+      meal.name = encryptField(meal.name)
+    }
+  }
+  next()
+})
+
+// ── Meal name decryption: post-find ──────────────────────────────────────────
+
+function decryptMeals(doc) {
+  if (!doc?.meals?.length) return
+  for (const meal of doc.meals) {
+    if (meal.name !== null) meal.name = decryptField(meal.name)
+  }
+}
+
+nutritionSchema.post('find', function (docs) {
+  docs.forEach(decryptMeals)
+})
+
+nutritionSchema.post('findOne', function (doc) {
+  if (doc) decryptMeals(doc)
+})
+
+nutritionSchema.post('findOneAndUpdate', function (doc) {
+  if (doc) decryptMeals(doc)
 })
 
 export default mongoose.model('Nutrition', nutritionSchema)

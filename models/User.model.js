@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
 import bcrypt from 'bcryptjs'
+import { encryptField, decryptField } from '../src/utils/encryption.js'
 
 const userSchema = new mongoose.Schema(
   {
@@ -34,6 +35,13 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['user', 'admin', 'coach'],
       default: 'user',
+    },
+    // PII fields — stored AES-256-GCM encrypted (HIPAA/GDPR)
+    dateOfBirth: {
+      type: String,
+    },
+    phoneNumber: {
+      type: String,
     },
     isVerified: {
       type: Boolean,
@@ -128,6 +136,8 @@ const userSchema = new mongoose.Schema(
   }
 )
 
+// ── Existing pre-save hooks ───────────────────────────────────────────────────
+
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next()
 
@@ -158,6 +168,40 @@ userSchema.pre('save', function (next) {
   }
   next()
 })
+
+// ── PII encryption: pre-save ──────────────────────────────────────────────────
+
+userSchema.pre('save', function (next) {
+  if (this.isModified('dateOfBirth') && this.dateOfBirth !== null) {
+    this.dateOfBirth = encryptField(this.dateOfBirth)
+  }
+  if (this.isModified('phoneNumber') && this.phoneNumber !== null) {
+    this.phoneNumber = encryptField(this.phoneNumber)
+  }
+  next()
+})
+
+// ── PII decryption: post-find ─────────────────────────────────────────────────
+
+function decryptUser(doc) {
+  if (!doc) return
+  if (doc.dateOfBirth !== null) doc.dateOfBirth = decryptField(doc.dateOfBirth)
+  if (doc.phoneNumber !== null) doc.phoneNumber = decryptField(doc.phoneNumber)
+}
+
+userSchema.post('find', function (docs) {
+  docs.forEach(decryptUser)
+})
+
+userSchema.post('findOne', function (doc) {
+  decryptUser(doc)
+})
+
+userSchema.post('findOneAndUpdate', function (doc) {
+  decryptUser(doc)
+})
+
+// ── Instance methods ──────────────────────────────────────────────────────────
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password)
