@@ -1,4 +1,4 @@
-# HealthSync Git Branching Strategy
+ HealthSync Git Branching Strategy
 
 ## Branches
 - main        → production only, protected
