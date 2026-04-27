@@ -21,12 +21,10 @@ export const registerRoutes = (app) => {
   app.use('/api/workouts', workoutRoutes)
   app.use('/api/goals', goalRoutes)
   app.use('/api/nutrition', nutritionRoutesOld)
+  app.use('/api/nutrition', nutritionRoutes)
   app.use('/api/onboarding', onboardingRoutes)
   app.use('/api/ai', aiRoutes)
   app.use('/api/notifications', notificationRoutes)
-
-  // New Phase 9 routes
-  app.use('/api/nutrition', nutritionRoutes)
   app.use('/api/workout-library', workoutLibraryRoutes)
   app.use('/api/workout-sessions', workoutSessionRoutes)
   app.use('/api/social', socialRoutes)

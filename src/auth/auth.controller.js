@@ -10,6 +10,20 @@ import {
 import { successResponse, errorResponse } from '../../utils/response.utils.js'
 import * as authService from './auth.service.js'
 
+// Shared cookie options — HttpOnly prevents JS access, Secure enforced in prod
+const refreshCookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+}
+
+const clearCookieOptions = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+}
+
 export const register = async (req, res) => {
   try {
     const { error, value } = registerSchema.validate(req.body)
@@ -47,6 +61,11 @@ export const login = async (req, res) => {
     }
 
     const result = await authService.login(value)
+
+    // Set refresh token as HttpOnly cookie — inaccessible to JavaScript
+    res.cookie('refreshToken', result.refreshToken, refreshCookieOptions)
+
+    // Return refresh token in body too for mobile clients (RN SecureStore)
     return successResponse(res, 200, 'Login successful', result)
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -55,12 +74,15 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const { refreshToken } = req.body
-    if (!refreshToken) {
-      return errorResponse(res, 400, 'Refresh token required')
+    // Accept token from cookie (web) or body (mobile)
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken
+
+    res.clearCookie('refreshToken', clearCookieOptions)
+
+    if (refreshToken) {
+      await authService.logout(refreshToken)
     }
 
-    await authService.logout(refreshToken)
     return successResponse(res, 200, 'Logout successful')
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -69,17 +91,21 @@ export const logout = async (req, res) => {
 
 export const refreshToken = async (req, res) => {
   try {
-    const { error, value } = refreshSchema.validate(req.body)
-    if (error) {
-      return errorResponse(
-        res,
-        400,
-        'Validation failed',
-        error.details.map((d) => d.message)
-      )
+    // Accept from cookie (web) or body (mobile)
+    const tokenFromCookie = req.cookies?.refreshToken
+    const tokenFromBody = req.body?.refreshToken
+
+    const token = tokenFromCookie || tokenFromBody
+
+    if (!token) {
+      return errorResponse(res, 400, 'Refresh token required')
     }
 
-    const result = await authService.refreshTokens(value.refreshToken)
+    const result = await authService.refreshTokens(token)
+
+    // Rotate cookie
+    res.cookie('refreshToken', result.refreshToken, refreshCookieOptions)
+
     return successResponse(res, 200, 'Token refreshed', result)
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -156,10 +182,11 @@ export const forgotPassword = async (req, res) => {
     }
 
     await authService.forgotPassword(value.email)
+    // Always return 200 regardless of whether the email exists (no enumeration)
     return successResponse(
       res,
       200,
-      'If an account exists, a password reset link has been sent to your email'
+      'If an account exists with that email, a password reset code has been sent.'
     )
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -183,6 +210,10 @@ export const resetPassword = async (req, res) => {
       otp: value.otp,
       newPassword: value.password,
     })
+
+    // Clear any existing refresh token cookie — force fresh login after password reset
+    res.clearCookie('refreshToken', clearCookieOptions)
+
     return successResponse(res, 200, 'Password reset successfully')
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
@@ -192,11 +223,18 @@ export const resetPassword = async (req, res) => {
 export const googleCallback = async (req, res) => {
   try {
     const result = await authService.googleAuthCallback(req.user)
-    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`
+
+    // Set refresh token as HttpOnly cookie — NEVER put it in the redirect URL
+    res.cookie('refreshToken', result.refreshToken, {
+      ...refreshCookieOptions,
+      sameSite: 'lax', // 'lax' required for cross-origin OAuth redirect
+    })
+
+    // Only the short-lived access token goes in the URL
+    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?accessToken=${result.accessToken}`
     return res.redirect(redirectUrl)
   } catch (error) {
-    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?error=authentication_failed`
-    return res.redirect(redirectUrl)
+    return res.redirect(`${process.env.CLIENT_URL}/auth/callback?error=authentication_failed`)
   }
 }
 

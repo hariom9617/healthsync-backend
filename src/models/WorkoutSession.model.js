@@ -15,7 +15,7 @@ const workoutSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'completed', 'paused'],
+      enum: ['active', 'paused', 'completed', 'abandoned'],
       default: 'active',
     },
     startedAt: {
@@ -25,8 +25,11 @@ const workoutSessionSchema = new mongoose.Schema(
     completedAt: {
       type: Date,
     },
-    duration: {
-      type: Number, // in minutes
+    durationSeconds: {
+      type: Number,
+    },
+    currentExerciseIndex: {
+      type: Number,
       default: 0,
     },
     currentSet: {
@@ -37,30 +40,30 @@ const workoutSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    currentExercise: {
-      type: Number,
-      default: 0,
-    },
-    heartRate: {
+    heartRateAvg: {
       type: Number,
     },
-    caloriesBurned: {
-      type: Number,
-      default: 0,
-    },
-    setsCompleted: [
+    heartRateSamples: [
       {
-        exerciseIndex: Number,
-        setNumber: Number,
-        reps: Number,
-        weight: Number,
-        completedAt: Date,
+        value: { type: Number },
+        recordedAt: { type: Date, default: Date.now },
       },
     ],
+    caloriesBurned: {
+      type: Number,
+    },
     notes: {
       type: String,
-      default: '',
     },
+    exercises: [
+      {
+        name: { type: String },
+        sets: { type: Number },
+        reps: { type: Number },
+        rest: { type: Number },
+        completed: { type: Boolean, default: false },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -68,6 +71,5 @@ const workoutSessionSchema = new mongoose.Schema(
 )
 
 workoutSessionSchema.index({ userId: 1, status: 1 })
-workoutSessionSchema.index({ startedAt: -1 })
 
 export const WorkoutSession = mongoose.model('WorkoutSession', workoutSessionSchema)

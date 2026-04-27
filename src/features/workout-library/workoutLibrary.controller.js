@@ -108,24 +108,28 @@ export const getWorkoutById = async (req, res) => {
       return errorResponse(res, 404, 'Workout not found')
     }
 
-    // Format workout to match frontend expectations
-    const formattedWorkout = {
-      id: workout._id,
+    return successResponse(res, 200, 'Workout details fetched', {
+      _id: workout._id,
       name: workout.name,
       type: workout.type,
-      difficulty: workout.difficulty || 'beginner',
-      duration: workout.duration || 30,
-      targetMuscles: workout.targetMuscles || [],
+      level: workout.level,
       equipment: workout.equipment || [],
-      rating: workout.rating || 4.5,
-      isFavorite: workout.isFavorite || false,
+      duration: workout.duration,
+      sets: workout.sets,
+      reps: workout.reps,
+      rest: workout.rest,
       imageUrl: workout.imageUrl,
-      videoUrl: workout.videoUrl,
-      instructions: workout.instructions,
-      exercises: workout.exercises || [],
-    }
-
-    return successResponse(res, 200, 'Workout details fetched', formattedWorkout)
+      exercises: (workout.exercises || []).map((ex) => ({
+        name: ex.name,
+        sets: ex.sets,
+        reps: ex.reps,
+        rest: ex.rest,
+        description: ex.description,
+      })),
+      difficulty: workout.difficulty,
+      muscleGroups: workout.muscleGroups || [],
+      caloriesBurned: workout.caloriesBurned || 0,
+    })
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)
   }

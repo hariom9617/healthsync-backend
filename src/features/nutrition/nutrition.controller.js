@@ -186,23 +186,38 @@ export const deleteMeal = async (req, res) => {
 export const getNutritionTip = async (req, res) => {
   try {
     const { query } = req.body
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      return errorResponse(res, 400, 'Query is required')
+    }
+    if (query.length > 500) {
+      return errorResponse(res, 400, 'Query must be 500 characters or fewer')
+    }
 
     const userContext = await buildUserHealthContext(req.user._id)
 
-    const response = await fetch(
-      `${process.env.AI_SERVICE_URL || 'http://localhost:8000'}/ai/nutrition-tip`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query,
-          user_context: userContext,
-        }),
-      }
-    )
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+
+    let response
+    try {
+      response = await fetch(
+        `${process.env.AI_SERVICE_URL || 'http://localhost:8000'}/ai/nutrition-tip`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query.trim(), user_context: userContext }),
+          signal: controller.signal,
+        }
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (!response.ok) {
+      return errorResponse(res, 502, 'Nutrition tip service unavailable')
+    }
 
     const data = await response.json()
-
     return successResponse(res, 200, 'Nutrition tip generated', data.data)
   } catch (error) {
     return errorResponse(res, error.statusCode || 500, error.message)

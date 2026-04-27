@@ -25,12 +25,12 @@ export const logWorkoutSchema = Joi.object({
       'flexibility',
       'sports'
     ),
-  title: Joi.string().when('workoutId', {
+  title: Joi.string().max(200).when('workoutId', {
     is: Joi.exist(),
     then: Joi.optional(),
     otherwise: Joi.required(),
   }),
-  name: Joi.string().optional(),
+  name: Joi.string().max(200).optional(),
   duration: Joi.number().integer().min(1).required(),
   caloriesBurned: Joi.number().min(0).optional(),
   distance: Joi.number().min(0).optional(),
@@ -39,20 +39,21 @@ export const logWorkoutSchema = Joi.object({
   exercises: Joi.array()
     .items(
       Joi.object({
-        name: Joi.string().required(),
-        sets: Joi.number().integer().min(1).optional(),
-        reps: Joi.number().integer().min(1).optional(),
-        weightKg: Joi.number().min(0).optional(),
-        durationSec: Joi.number().integer().min(1).optional(),
-        notes: Joi.string().optional(),
+        name: Joi.string().max(200).required(),
+        sets: Joi.number().integer().min(1).max(100).optional(),
+        reps: Joi.number().integer().min(1).max(1000).optional(),
+        weightKg: Joi.number().min(0).max(1000).optional(),
+        durationSec: Joi.number().integer().min(1).max(86400).optional(),
+        notes: Joi.string().max(500).optional(),
       })
     )
+    .max(100)
     .optional(),
-  heartRateAvg: Joi.number().min(0).optional(),
-  heartRateMax: Joi.number().min(0).optional(),
+  heartRateAvg: Joi.number().min(0).max(300).optional(),
+  heartRateMax: Joi.number().min(0).max(300).optional(),
   notes: Joi.string().max(1000).optional(),
   completed: Joi.boolean().default(true),
-  sets: Joi.array().optional(), // For frontend logging format
+  sets: Joi.array().max(100).optional(), // For frontend logging format
   completedAt: Joi.date().required(),
   source: Joi.string().optional().valid('manual', 'apple_health', 'google_fit', 'strava'),
 })

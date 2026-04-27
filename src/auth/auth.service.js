@@ -1,4 +1,6 @@
+import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
+import { OAuth2Client } from 'google-auth-library'
 import User from '../../models/User.model.js'
 import Token from '../../models/Token.model.js'
 import {
@@ -13,9 +15,40 @@ import {
   welcomeEmail,
 } from '../../utils/email.utils.js'
 
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString()
+const GOOGLE_CLIENT = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
+const OTP_SALT_ROUNDS = 10
+const MAX_FAILED_ATTEMPTS = 5
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000 // 15 minutes
+
+// ── Token helpers ─────────────────────────────────────────────────────────────
+
+// Cryptographically secure 6-digit OTP
+function generateOTP() {
+  return crypto.randomInt(100000, 1000000).toString()
 }
+
+// SHA-256 hash for long random tokens (refresh tokens are already high-entropy JWTs;
+// hashing prevents DB-dump session hijacking without the bcrypt cost on every refresh)
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+// bcrypt hash for short OTPs (brute-force protection even with DB compromise)
+async function hashOTP(otp) {
+  return bcrypt.hash(otp, OTP_SALT_ROUNDS)
+}
+
+// Store a new refresh token (hashed) and return the raw token to send to client
+async function storeRefreshToken(userId, rawToken) {
+  await Token.create({
+    userId,
+    token: hashRefreshToken(rawToken),
+    type: 'refresh',
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  })
+}
+
+// ── Auth flows ────────────────────────────────────────────────────────────────
 
 export const register = async ({ name, firstName, lastName, email, password, consent }) => {
   const existingUser = await User.findOne({ email: email.toLowerCase() })
@@ -23,14 +56,12 @@ export const register = async ({ name, firstName, lastName, email, password, con
     throw Object.assign(new Error('Email already registered'), { statusCode: 409 })
   }
 
-  // Handle both name formats
   let userFirstName = firstName
   let userLastName = lastName
-
   if (name && !firstName && !lastName) {
-    const nameParts = name.trim().split(' ')
-    userFirstName = nameParts[0] || name
-    userLastName = nameParts.slice(1).join(' ') || ''
+    const parts = name.trim().split(' ')
+    userFirstName = parts[0] || name
+    userLastName = parts.slice(1).join(' ') || ''
   }
 
   const user = await User.create({
@@ -38,77 +69,77 @@ export const register = async ({ name, firstName, lastName, email, password, con
     lastName: userLastName,
     email: email.toLowerCase(),
     password,
-    consent: {
-      ...consent,
-      consentDate: new Date(),
-    },
+    consent: { ...consent, consentDate: new Date() },
   })
 
   const otp = generateOTP()
-
   await Token.deleteMany({ userId: user._id, type: 'otp' })
-
   await Token.create({
     userId: user._id,
-    token: otp,
+    token: await hashOTP(otp),
     type: 'otp',
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   })
 
   const emailContent = verificationEmail(user.getFullName(), otp)
-  await sendEmail({
-    to: user.email,
-    subject: emailContent.subject,
-    html: emailContent.html,
-  })
+  await sendEmail({ to: user.email, subject: emailContent.subject, html: emailContent.html })
 
   return user.toJSON()
 }
 
 export const login = async ({ email, password }) => {
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password')
+  const user = await User.findOne({ email: email.toLowerCase() }).select(
+    '+password +failedLoginAttempts +lockoutUntil'
+  )
 
-  if (!user) {
+  // Uniform error — never confirm whether the email exists
+  if (!user || !user.password) {
     throw Object.assign(new Error('Invalid credentials'), { statusCode: 401 })
   }
 
-  if (!user.password) {
-    throw Object.assign(new Error('Please use OAuth login'), { statusCode: 401 })
+  // Account lockout check
+  if (user.lockoutUntil && user.lockoutUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.lockoutUntil - Date.now()) / 60000)
+    throw Object.assign(new Error(`Account locked. Try again in ${minutesLeft} minute(s).`), {
+      statusCode: 429,
+    })
   }
 
   const isPasswordValid = await user.comparePassword(password)
+
   if (!isPasswordValid) {
+    const attempts = (user.failedLoginAttempts || 0) + 1
+    const update =
+      attempts >= MAX_FAILED_ATTEMPTS
+        ? { failedLoginAttempts: 0, lockoutUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) }
+        : { failedLoginAttempts: attempts }
+
+    await User.updateOne({ _id: user._id }, update)
     throw Object.assign(new Error('Invalid credentials'), { statusCode: 401 })
   }
 
-  // if (!user.isVerified) {
-  //   throw Object.assign(new Error('Please verify your email first'), { statusCode: 401 })
-  // }
+  if (!user.isVerified) {
+    throw Object.assign(new Error('Please verify your email first'), { statusCode: 401 })
+  }
 
   if (!user.isActive) {
     throw Object.assign(new Error('Account is deactivated'), { statusCode: 401 })
   }
 
-  user.lastLogin = new Date()
-  await user.save()
+  // Reset lockout state and record login — use updateOne to skip re-encryption pre-save hooks
+  await User.updateOne(
+    { _id: user._id },
+    { failedLoginAttempts: 0, lockoutUntil: null, lastLogin: new Date() }
+  )
 
   const payload = { userId: user._id, role: user.role }
   const accessToken = generateAccessToken(payload)
   const refreshToken = generateRefreshToken(payload)
-
-  await Token.create({
-    userId: user._id,
-    token: refreshToken,
-    type: 'refresh',
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  })
+  await storeRefreshToken(user._id, refreshToken)
 
   const userJSON = user.toJSON()
   return {
-    user: {
-      ...userJSON,
-      isOnboardingComplete: user.isOnboardingComplete,
-    },
+    user: { ...userJSON, isOnboardingComplete: user.isOnboardingComplete },
     accessToken,
     refreshToken,
   }
@@ -116,30 +147,19 @@ export const login = async ({ email, password }) => {
 
 export const googleAuthCallback = async (googleProfile) => {
   const user = googleProfile
-
   const payload = { userId: user._id, role: user.role }
   const accessToken = generateAccessToken(payload)
   const refreshToken = generateRefreshToken(payload)
-
-  await Token.create({
-    userId: user._id,
-    token: refreshToken,
-    type: 'refresh',
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  })
-
-  return {
-    user: user.toJSON(),
-    accessToken,
-    refreshToken,
-  }
+  await storeRefreshToken(user._id, refreshToken)
+  return { user: user.toJSON(), accessToken, refreshToken }
 }
 
 export const refreshTokens = async (refreshToken) => {
   const decoded = verifyRefreshToken(refreshToken)
+  const tokenHash = hashRefreshToken(refreshToken)
 
   const tokenDoc = await Token.findOne({
-    token: refreshToken,
+    token: tokenHash,
     userId: decoded.userId,
     type: 'refresh',
     isRevoked: false,
@@ -150,6 +170,7 @@ export const refreshTokens = async (refreshToken) => {
     throw Object.assign(new Error('Invalid refresh token'), { statusCode: 401 })
   }
 
+  // Rotate: revoke old, issue new
   tokenDoc.isRevoked = true
   await tokenDoc.save()
 
@@ -161,93 +182,66 @@ export const refreshTokens = async (refreshToken) => {
   const payload = { userId: user._id, role: user.role }
   const newAccessToken = generateAccessToken(payload)
   const newRefreshToken = generateRefreshToken(payload)
+  await storeRefreshToken(user._id, newRefreshToken)
 
-  await Token.create({
-    userId: user._id,
-    token: newRefreshToken,
-    type: 'refresh',
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  })
-
-  return {
-    accessToken: newAccessToken,
-    refreshToken: newRefreshToken,
-  }
+  return { accessToken: newAccessToken, refreshToken: newRefreshToken }
 }
 
 export const logout = async (refreshToken) => {
-  const tokenDoc = await Token.findOne({ token: refreshToken, type: 'refresh' })
-
-  if (tokenDoc) {
-    tokenDoc.isRevoked = true
-    await tokenDoc.save()
-  }
-}
-
-export const verifyEmail = async (token) => {
-  const tokens = await Token.find({
-    type: 'verification',
-    isRevoked: false,
-    expiresAt: { $gt: new Date() },
-  })
-
-  let matchingToken = null
-  for (const tokenDoc of tokens) {
-    const isMatch = await bcrypt.compare(token, tokenDoc.token)
-    if (isMatch) {
-      matchingToken = tokenDoc
-      break
+  if (!refreshToken) return
+  try {
+    const tokenHash = hashRefreshToken(refreshToken)
+    const tokenDoc = await Token.findOne({ token: tokenHash, type: 'refresh' })
+    if (tokenDoc) {
+      tokenDoc.isRevoked = true
+      await tokenDoc.save()
     }
+  } catch {
+    // Invalid token shape — logout still succeeds
   }
-
-  if (!matchingToken) {
-    throw Object.assign(new Error('Invalid or expired verification token'), { statusCode: 400 })
-  }
-
-  const user = await User.findById(matchingToken.userId)
-  if (!user) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 })
-  }
-
-  user.isVerified = true
-  await user.save()
-
-  await Token.deleteOne({ _id: matchingToken._id })
-
-  return user
 }
 
 export const verifyOTP = async ({ email, otp }) => {
   const user = await User.findOne({ email: email.toLowerCase() })
 
+  // Don't reveal user existence — use same error message regardless
   if (!user) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+    throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 })
   }
 
-  const tokenDoc = await Token.findOne({
+  const tokenDocs = await Token.find({
     userId: user._id,
     type: 'otp',
-    token: otp,
     isRevoked: false,
     expiresAt: { $gt: new Date() },
   })
 
-  if (!tokenDoc) {
+  let matchingTokenId = null
+  for (const tokenDoc of tokenDocs) {
+    if (await bcrypt.compare(otp, tokenDoc.token)) {
+      matchingTokenId = tokenDoc._id
+      break
+    }
+  }
+
+  if (!matchingTokenId) {
     throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 })
   }
 
-  user.isVerified = true
-  await user.save()
+  // Atomic compare-and-swap: only proceed if WE are the one who flipped isRevoked
+  const claimed = await Token.findOneAndUpdate(
+    { _id: matchingTokenId, isRevoked: false },
+    { isRevoked: true }
+  )
+  if (!claimed) {
+    // Another concurrent request already consumed this token
+    throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 })
+  }
 
-  tokenDoc.isRevoked = true
-  await tokenDoc.save()
+  await User.updateOne({ _id: user._id }, { isVerified: true })
 
   const emailContent = welcomeEmail(user.getFullName())
-  await sendEmail({
-    to: user.email,
-    subject: emailContent.subject,
-    html: emailContent.html,
-  })
+  await sendEmail({ to: user.email, subject: emailContent.subject, html: emailContent.html })
 
   return user
 }
@@ -255,148 +249,139 @@ export const verifyOTP = async ({ email, otp }) => {
 export const forgotPassword = async (email) => {
   const user = await User.findOne({ email: email.toLowerCase() })
 
-  if (!user) {
-    throw Object.assign(new Error('If an account exists, a reset link has been sent'), {
-      statusCode: 200,
-    })
-  }
+  // Always succeed silently — never confirm whether the email exists
+  if (!user) return
 
   const otp = generateOTP()
-
   await Token.deleteMany({ userId: user._id, type: 'otp', purpose: 'reset' })
-
   await Token.create({
     userId: user._id,
-    token: otp,
+    token: await hashOTP(otp),
     type: 'otp',
     purpose: 'reset',
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   })
 
   const emailContent = passwordResetEmail(user.getFullName(), otp)
-
-  await sendEmail({
-    to: user.email,
-    subject: emailContent.subject,
-    html: emailContent.html,
-  })
+  await sendEmail({ to: user.email, subject: emailContent.subject, html: emailContent.html })
 }
 
 export const resetPassword = async ({ email, otp, newPassword }) => {
   const user = await User.findOne({ email: email.toLowerCase() })
-
   if (!user) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 })
+    throw Object.assign(new Error('Invalid or expired code'), { statusCode: 400 })
   }
 
-  const tokenDoc = await Token.findOne({
+  const tokenDocs = await Token.find({
     userId: user._id,
     type: 'otp',
-    token: otp,
     purpose: 'reset',
     isRevoked: false,
     expiresAt: { $gt: new Date() },
   })
 
-  if (!tokenDoc) {
+  let matchingTokenId = null
+  for (const tokenDoc of tokenDocs) {
+    if (await bcrypt.compare(otp, tokenDoc.token)) {
+      matchingTokenId = tokenDoc._id
+      break
+    }
+  }
+
+  if (!matchingTokenId) {
+    throw Object.assign(new Error('Invalid or expired code'), { statusCode: 400 })
+  }
+
+  // Atomic compare-and-swap prevents concurrent reuse of the same reset code
+  const claimed = await Token.findOneAndUpdate(
+    { _id: matchingTokenId, isRevoked: false },
+    { isRevoked: true }
+  )
+  if (!claimed) {
     throw Object.assign(new Error('Invalid or expired code'), { statusCode: 400 })
   }
 
   user.password = newPassword
   await user.save()
 
-  tokenDoc.isRevoked = true
-  await tokenDoc.save()
+  // Revoke all refresh tokens on password reset (force re-login everywhere)
+  await Token.updateMany(
+    { userId: user._id, type: 'refresh', isRevoked: false },
+    { isRevoked: true }
+  )
 
   return user
 }
 
 export const googleMobileAuth = async (idToken) => {
-  // For now, we'll implement a basic verification
-  // In production, you should use Google's OAuth2 client library to verify the token
+  let ticket
   try {
-    // This is a simplified version - in production, verify the token with Google
-    const decoded = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString())
-
-    if (!decoded.email) {
-      throw Object.assign(new Error('Invalid token'), { statusCode: 401 })
-    }
-
-    let user = await User.findOne({ email: decoded.email.toLowerCase() })
-
-    if (!user) {
-      // Create new user from Google data
-      const nameParts = (decoded.name || '').split(' ')
-      user = await User.create({
-        firstName: nameParts[0] || 'User',
-        lastName: nameParts.slice(1).join(' ') || '',
-        email: decoded.email.toLowerCase(),
-        googleId: decoded.sub,
-        isVerified: true,
-        isActive: true,
-      })
-    } else if (!user.googleId) {
-      // Link Google account to existing user
-      user.googleId = decoded.sub
-      await user.save()
-    }
-
-    if (!user.isActive) {
-      throw Object.assign(new Error('Account is deactivated'), { statusCode: 401 })
-    }
-
-    user.lastLogin = new Date()
-    await user.save()
-
-    const payload = { userId: user._id, role: user.role }
-    const accessToken = generateAccessToken(payload)
-    const refreshToken = generateRefreshToken(payload)
-
-    await Token.create({
-      userId: user._id,
-      token: refreshToken,
-      type: 'refresh',
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    ticket = await GOOGLE_CLIENT.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
     })
-
-    return {
-      user: user.toJSON(),
-      accessToken,
-      refreshToken,
-    }
-  } catch (error) {
+  } catch {
     throw Object.assign(new Error('Invalid Google token'), { statusCode: 401 })
   }
+
+  const googlePayload = ticket.getPayload()
+  if (!googlePayload?.email) {
+    throw Object.assign(new Error('Invalid Google token'), { statusCode: 401 })
+  }
+
+  let user = await User.findOne({ email: googlePayload.email.toLowerCase() })
+
+  if (!user) {
+    const parts = (googlePayload.name || '').split(' ')
+    user = await User.create({
+      firstName: parts[0] || 'User',
+      lastName: parts.slice(1).join(' ') || '',
+      email: googlePayload.email.toLowerCase(),
+      googleId: googlePayload.sub,
+      isVerified: true,
+      isActive: true,
+    })
+  } else if (!user.googleId) {
+    await User.updateOne({ _id: user._id }, { googleId: googlePayload.sub })
+  }
+
+  if (!user.isActive) {
+    throw Object.assign(new Error('Account is deactivated'), { statusCode: 401 })
+  }
+
+  await User.updateOne({ _id: user._id }, { lastLogin: new Date() })
+
+  const payload = { userId: user._id, role: user.role }
+  const accessToken = generateAccessToken(payload)
+  const refreshToken = generateRefreshToken(payload)
+  await storeRefreshToken(user._id, refreshToken)
+
+  return { user: user.toJSON(), accessToken, refreshToken }
 }
 
 export const resendOTP = async (email) => {
   const user = await User.findOne({ email: email.toLowerCase() })
-
   if (!user) {
     throw Object.assign(new Error('User not found'), { statusCode: 404 })
   }
-
   if (user.isVerified) {
     throw Object.assign(new Error('Email already verified'), { statusCode: 400 })
   }
 
-  await Token.deleteMany({ userId: user._id, type: 'otp' })
-
   const otp = generateOTP()
-
+  await Token.deleteMany({ userId: user._id, type: 'otp' })
   await Token.create({
     userId: user._id,
-    token: otp,
+    token: await hashOTP(otp),
     type: 'otp',
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   })
 
   const emailContent = verificationEmail(user.getFullName(), otp)
-  await sendEmail({
-    to: user.email,
-    subject: emailContent.subject,
-    html: emailContent.html,
-  })
+  await sendEmail({ to: user.email, subject: emailContent.subject, html: emailContent.html })
 
   return { message: 'OTP sent' }
 }
+
+// Legacy verifyEmail path (kept for backward compat — delegates to verifyOTP)
+export const verifyEmail = verifyOTP

@@ -16,7 +16,7 @@ export const helmetMiddleware = helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'"],
       imgSrc: ["'self'", 'data:', 'https:'],
       connectSrc: ["'self'"],
       fontSrc: ["'self'"],
@@ -71,6 +71,18 @@ export const uploadLimiter = rateLimit({
   message: { success: false, message: 'Upload limit reached. Please wait a moment.' },
 })
 
+// OTP endpoints: 3 per 15 min — tight limit to slow brute force on 6-digit codes
+export const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many OTP attempts. Please wait 15 minutes.',
+  },
+})
+
 // ── Request tracing ───────────────────────────────────────────────────────────
 
 export const requestIdMiddleware = (req, res, next) => {
@@ -88,9 +100,9 @@ export const mongoSanitizeMiddleware = mongoSanitize({
   allowDots: false,
 })
 
-// ── Mount everything — call this BEFORE registerRoutes() ─────────────────────
+// ── Phase 1: runs BEFORE body parsing (helmet, tracing, rate limits) ─────────
 
-export function applySecurityMiddleware(app) {
+export function applyPreBodyMiddleware(app) {
   app.use(helmetMiddleware)
   app.use(requestIdMiddleware)
   app.use(globalLimiter)
@@ -98,6 +110,11 @@ export function applySecurityMiddleware(app) {
   app.use('/api/ai', aiLimiter)
   app.use('/api/food-scanner', uploadLimiter)
   app.use('/api/integrations', uploadLimiter)
+}
+
+// ── Phase 2: runs AFTER body parsing (HPP, mongo-sanitize inspect req.body) ──
+
+export function applyPostBodyMiddleware(app) {
   app.use(hppMiddleware)
   app.use(mongoSanitizeMiddleware)
 }

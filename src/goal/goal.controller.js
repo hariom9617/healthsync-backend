@@ -19,7 +19,7 @@ export const createGoal = async (req, res) => {
     }
 
     const goal = await goalService.createGoal({
-      userId: req.user.id,
+      userId: req.user._id,
       ...value,
     })
 
@@ -31,14 +31,16 @@ export const createGoal = async (req, res) => {
 
 export const getGoals = async (req, res) => {
   try {
-    const { status, type, limit = 20, page = 1 } = req.query
+    const { status, type } = req.query
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100)
+    const page = Math.max(parseInt(req.query.page) || 1, 1)
 
     const result = await goalService.getGoals({
-      userId: req.user.id,
+      userId: req.user._id,
       status,
       type,
-      limit: parseInt(limit),
-      page: parseInt(page),
+      limit,
+      page,
     })
 
     return successResponse(res, 200, 'Goals fetched', result)
@@ -51,7 +53,7 @@ export const getGoalById = async (req, res) => {
   try {
     const { goalId } = req.params
     const goal = await goalService.getGoalById({
-      userId: req.user.id,
+      userId: req.user._id,
       goalId,
     })
 
@@ -75,7 +77,7 @@ export const updateProgress = async (req, res) => {
     }
 
     const goal = await goalService.updateGoalProgress({
-      userId: req.user.id,
+      userId: req.user._id,
       goalId,
       currentValue: value.currentValue,
     })
@@ -100,7 +102,7 @@ export const updateGoal = async (req, res) => {
     }
 
     const goal = await goalService.updateGoal({
-      userId: req.user.id,
+      userId: req.user._id,
       goalId,
       updates: value,
     })
@@ -115,7 +117,7 @@ export const deleteGoal = async (req, res) => {
   try {
     const { goalId } = req.params
     const result = await goalService.deleteGoal({
-      userId: req.user.id,
+      userId: req.user._id,
       goalId,
     })
 
@@ -127,12 +129,10 @@ export const deleteGoal = async (req, res) => {
 
 export const getPublicGoals = async (req, res) => {
   try {
-    const { limit = 20, page = 1 } = req.query
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100)
+    const page = Math.max(parseInt(req.query.page) || 1, 1)
 
-    const result = await goalService.getPublicGoals({
-      limit: parseInt(limit),
-      page: parseInt(page),
-    })
+    const result = await goalService.getPublicGoals({ limit, page })
 
     return successResponse(res, 200, 'Public goals fetched', result)
   } catch (error) {

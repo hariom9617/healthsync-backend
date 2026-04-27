@@ -19,6 +19,7 @@ const requiredEnvVars = [
   'EMAIL_USER',
   'EMAIL_PASS',
   'SESSION_SECRET',
+  'ENCRYPTION_KEY',
 ]
 
 const missingVars = requiredEnvVars.filter((varName) => !process.env[varName])
